@@ -18,6 +18,7 @@ import { OpenAIProvider } from "./openai.ts";
 import { GitHubCopilotProvider } from "./github-copilot.ts";
 import { OpenRouterProvider } from "./openrouter.ts";
 import { DeepSeekProvider } from "./deepseek.ts";
+import { GeminiProvider } from "./gemini.ts";
 
 // ---------------------------------------------------------------------------
 // Single source of truth — add new providers here only.
@@ -29,6 +30,7 @@ const PROVIDERS = {
   "github-copilot": () => new GitHubCopilotProvider(),
   openrouter: () => new OpenRouterProvider(),
   deepseek: () => new DeepSeekProvider(process.env["DEEPSEEK_API_KEY"] ?? ""),
+  gemini: () => new GeminiProvider(),
 } satisfies Record<string, ProviderFactory>;
 
 /** Supported provider name — derived from the PROVIDERS registry. */
