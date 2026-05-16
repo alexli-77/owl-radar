@@ -71,30 +71,30 @@ function is403(err: unknown): boolean {
 }
 
 export async function callLlm(prompt: string, maxTokens = LLM_TOKENS_DEFAULT): Promise<string> {
-  for (let attempt = 0; ; attempt++) {
-    await acquireSlot();
-    let released = false;
-    try {
-      const result = await provider.call(prompt, maxTokens);
-      await sleep(MIN_INTER_REQUEST_MS);
-      return result;
-    } catch (err) {
-      if (attempt < MAX_RETRIES && is429(err)) {
-        releaseSlot();
-        released = true;
-        const wait = RETRY_BASE_MS * 2 ** attempt;
-        console.error(`[llm] 429 — retry ${attempt + 1}/${MAX_RETRIES} in ${wait / 1000}s...`);
-        await sleep(wait);
-        continue;
+  await acquireSlot();
+  try {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const result = await provider.call(prompt, maxTokens);
+        await sleep(MIN_INTER_REQUEST_MS);
+        return result;
+      } catch (err) {
+        if (attempt < MAX_RETRIES && is429(err)) {
+          const wait = RETRY_BASE_MS * 2 ** attempt;
+          console.error(`[llm] 429 — retry ${attempt + 1}/${MAX_RETRIES} in ${wait / 1000}s...`);
+          await sleep(wait);
+          continue;
+        }
+        if (is403(err) && fallbackProvider) {
+          console.error(`[llm] 403 quota exceeded — switching to fallback provider`);
+          return await fallbackProvider.call(prompt, maxTokens);
+        }
+        throw err;
       }
-      if (is403(err) && fallbackProvider) {
-        console.error(`[llm] 403 quota exceeded — switching to fallback provider`);
-        return await fallbackProvider.call(prompt, maxTokens);
-      }
-      throw err;
-    } finally {
-      if (!released) releaseSlot();
     }
+    throw new Error(`[llm] max retries (${MAX_RETRIES}) exceeded`);
+  } finally {
+    releaseSlot();
   }
 }
 
