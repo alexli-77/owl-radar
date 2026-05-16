@@ -33,7 +33,8 @@ const fallbackProvider: LlmProvider | null = (() => {
 // any given time; the rest queue and run as slots free up.
 // ---------------------------------------------------------------------------
 
-const LLM_CONCURRENCY = 5;
+const LLM_CONCURRENCY = 1;
+const MIN_INTER_REQUEST_MS = 5_000; // proactive throttle: stay under 12 RPM vs Gemini free 15 RPM
 let llmSlots = LLM_CONCURRENCY;
 const llmQueue: Array<() => void> = [];
 
@@ -58,8 +59,8 @@ function releaseSlot(): void {
 // LLM
 // ---------------------------------------------------------------------------
 
-const MAX_RETRIES = 3;
-const RETRY_BASE_MS = 5_000; // 5 s, 10 s, 20 s
+const MAX_RETRIES = 5;
+const RETRY_BASE_MS = 20_000; // 20 s, 40 s, 80 s, 160 s, 320 s
 
 export function is429(err: unknown): boolean {
   return (err as { status?: number })?.status === 429 || String(err).includes("429");
@@ -74,7 +75,9 @@ export async function callLlm(prompt: string, maxTokens = LLM_TOKENS_DEFAULT): P
     await acquireSlot();
     let released = false;
     try {
-      return await provider.call(prompt, maxTokens);
+      const result = await provider.call(prompt, maxTokens);
+      await sleep(MIN_INTER_REQUEST_MS);
+      return result;
     } catch (err) {
       if (attempt < MAX_RETRIES && is429(err)) {
         releaseSlot();
