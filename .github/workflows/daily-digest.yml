@@ -38,10 +38,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LLM_PROVIDER: openrouter
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_MODEL: meta-llama/llama-3.3-70b-instruct:free
+          OPENROUTER_MODEL: deepseek/deepseek-v4-flash:free
           PRODUCTHUNT_TOKEN: ${{ secrets.PRODUCTHUNT_TOKEN }}
           DIGEST_REPO: ${{ github.repository }}
-        run: pnpm start
+        run: |
+          for i in 1 2 3; do
+            pnpm start && break
+            [ $i -lt 3 ] && echo "Attempt $i failed, retrying in 90s..." && sleep 90
+          done
 
       - name: Commit digest files
         run: |
