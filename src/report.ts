@@ -59,8 +59,13 @@ function releaseSlot(): void {
 // LLM
 // ---------------------------------------------------------------------------
 
-const MAX_RETRIES = 5;
-const RETRY_BASE_MS = 20_000; // 20 s, 40 s, 80 s, 160 s, 320 s
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 8_000; // 8 s, 16 s, 32 s — fast failure when quota is exhausted
+
+// Circuit breaker: if this many consecutive items fully exhaust all retries with 429,
+// the daily quota is gone — abort rather than burning the rest of the job timeout.
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+let consecutiveFullFailures = 0;
 
 export function is429(err: unknown): boolean {
   return (err as { status?: number })?.status === 429 || String(err).includes("429");
@@ -71,12 +76,20 @@ function is403(err: unknown): boolean {
 }
 
 export async function callLlm(prompt: string, maxTokens = LLM_TOKENS_DEFAULT): Promise<string> {
+  if (consecutiveFullFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+    throw new Error(
+      `[llm] circuit breaker open — ${consecutiveFullFailures} consecutive items exhausted all retries. ` +
+        `Daily quota likely exhausted; aborting to preserve timeout budget.`,
+    );
+  }
+
   await acquireSlot();
   try {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const result = await provider.call(prompt, maxTokens);
         await sleep(MIN_INTER_REQUEST_MS);
+        consecutiveFullFailures = 0;
         return result;
       } catch (err) {
         if (attempt < MAX_RETRIES && is429(err)) {
@@ -87,11 +100,14 @@ export async function callLlm(prompt: string, maxTokens = LLM_TOKENS_DEFAULT): P
         }
         if (is403(err) && fallbackProvider) {
           console.error(`[llm] 403 quota exceeded — switching to fallback provider`);
-          return await fallbackProvider.call(prompt, maxTokens);
+          const result = await fallbackProvider.call(prompt, maxTokens);
+          consecutiveFullFailures = 0;
+          return result;
         }
         throw err;
       }
     }
+    consecutiveFullFailures++;
     throw new Error(`[llm] max retries (${MAX_RETRIES}) exceeded`);
   } finally {
     releaseSlot();
