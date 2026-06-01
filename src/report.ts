@@ -34,7 +34,7 @@ const fallbackProvider: LlmProvider | null = (() => {
 // ---------------------------------------------------------------------------
 
 const LLM_CONCURRENCY = 1;
-const MIN_INTER_REQUEST_MS = 5_000; // proactive throttle: stay under 12 RPM vs Gemini free 15 RPM
+const MIN_INTER_REQUEST_MS = Number(process.env["LLM_INTER_REQUEST_MS"] ?? 5_000); // proactive throttle: stay under 12 RPM vs Gemini free 15 RPM
 let llmSlots = LLM_CONCURRENCY;
 const llmQueue: Array<() => void> = [];
 
@@ -60,7 +60,7 @@ function releaseSlot(): void {
 // ---------------------------------------------------------------------------
 
 const MAX_RETRIES = 3;
-const RETRY_BASE_MS = 8_000; // 8 s, 16 s, 32 s — fast failure when quota is exhausted
+const RETRY_BASE_MS = 5_000; // 5 s, 10 s, 20 s — fast failure when quota is exhausted
 
 // Circuit breaker: if this many consecutive items fully exhaust all retries with 429,
 // the daily quota is gone — abort rather than burning the rest of the job timeout.
@@ -88,7 +88,7 @@ export async function callLlm(prompt: string, maxTokens = LLM_TOKENS_DEFAULT): P
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const result = await provider.call(prompt, maxTokens);
-        await sleep(MIN_INTER_REQUEST_MS);
+        if (MIN_INTER_REQUEST_MS > 0) await sleep(MIN_INTER_REQUEST_MS);
         consecutiveFullFailures = 0;
         return result;
       } catch (err) {

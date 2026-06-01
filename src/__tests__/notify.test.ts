@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildMessage, type Highlights } from "../notify.ts";
+import { buildMessage, toDiscordMarkdown, type Highlights } from "../notify.ts";
 
 const BASE_URL = "https://example.com/radar";
 
@@ -95,5 +95,10 @@ describe("buildMessage", () => {
     const msg = buildMessage("2026-03-09", ["ai-cli", "ai-cli-en"], BASE_URL);
     expect(msg).toContain("AI CLI 工具");
     expect(msg).not.toContain("◦");
+  });
+
+  it("converts notification HTML to Discord markdown", () => {
+    const msg = toDiscordMarkdown('<b>agents-radar</b> <a href="https://example.com">Report</a>');
+    expect(msg).toBe("**agents-radar** [Report](https://example.com)");
   });
 });

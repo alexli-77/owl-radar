@@ -1,18 +1,33 @@
 /**
- * Telegram notification — reads manifest.json and sends a message
+ * Notification delivery — reads manifest.json and sends a message
  * with links to the latest reports. Skips silently if secrets are not set.
  *
- * Required env vars:
+ * Telegram env vars:
  *   TELEGRAM_BOT_TOKEN  — bot token from @BotFather
  *   TELEGRAM_CHAT_ID    — channel/group/user chat ID
+ * Discord env vars:
+ *   DISCORD_BOT_TOKEN   — Discord bot token
+ *   DISCORD_CHANNEL_ID  — target Discord channel ID
  * Optional:
  *   PAGES_URL           — GitHub Pages base URL (defaults to the public deployment)
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import dotenv from "dotenv";
 import { NOTIFY_LABELS } from "./i18n.ts";
 import type { ReportHighlights } from "./prompts-data.ts";
+
+dotenv.config({
+  path: path.join(process.env["HOME"] ?? "", ".hermes", "secrets", "discord.env"),
+  quiet: true,
+});
+dotenv.config({
+  path: path.join(process.env["HOME"] ?? "", ".openclaw", "secrets", "discord.env"),
+  quiet: true,
+});
+dotenv.config({ path: ".env", override: true, quiet: true });
 
 export interface Highlights {
   zh: ReportHighlights;
@@ -43,6 +58,84 @@ async function sendTelegram(text: string): Promise<void> {
     const body = await res.text();
     throw new Error(`Telegram API ${res.status}: ${body}`);
   }
+}
+
+export function toDiscordMarkdown(html: string): string {
+  return html
+    .replace(/<b>(.*?)<\/b>/g, "**$1**")
+    .replace(/<a href="([^"]+)">([^<]+)<\/a>/g, "[$2]($1)")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+export function splitDiscordMessage(text: string): string[] {
+  const maxLen = 1900;
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+
+    let splitAt = remaining.lastIndexOf("\n", maxLen);
+    if (splitAt < maxLen * 0.5) splitAt = maxLen;
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  return chunks;
+}
+
+async function sendDiscord(text: string): Promise<void> {
+  const BOT_TOKEN = process.env["DISCORD_BOT_TOKEN"] ?? "";
+  const CHANNEL_ID = process.env["DISCORD_CHANNEL_ID"] ?? "";
+  const chunks = splitDiscordMessage(toDiscordMarkdown(text));
+
+  for (const chunk of chunks) {
+    await postDiscordMessage(BOT_TOKEN, CHANNEL_ID, chunk);
+  }
+}
+
+async function postDiscordMessage(botToken: string, channelId: string, content: string): Promise<void> {
+  const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bot ${botToken}`,
+        },
+        body: JSON.stringify({
+          content,
+          allowed_mentions: { parse: [] },
+        }),
+      });
+
+      if (res.ok) return;
+
+      const body = await res.text();
+      const retryAfter = Number(res.headers.get("retry-after") ?? "");
+      const retryable = res.status === 429 || res.status >= 500;
+      if (!retryable || attempt === maxAttempts) {
+        throw new Error(`Discord API ${res.status}: ${body}`);
+      }
+
+      await delay(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : attempt * 1000);
+    } catch (error) {
+      if (attempt === maxAttempts) throw error;
+      await delay(attempt * 1000);
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function buildMessage(
@@ -96,9 +189,11 @@ export function buildMessage(
 }
 
 async function main(): Promise<void> {
-  const BOT_TOKEN = process.env["TELEGRAM_BOT_TOKEN"] ?? "";
-  if (!BOT_TOKEN) {
-    console.log("[notify] TELEGRAM_BOT_TOKEN not set — skipping.");
+  const hasTelegram = Boolean(process.env["TELEGRAM_BOT_TOKEN"]);
+  const hasDiscord = Boolean(process.env["DISCORD_BOT_TOKEN"] && process.env["DISCORD_CHANNEL_ID"]);
+
+  if (!hasTelegram && !hasDiscord) {
+    console.log("[notify] No notification credentials set — skipping.");
     return;
   }
 
@@ -131,12 +226,22 @@ async function main(): Promise<void> {
 
   const text = buildMessage(date, reports, undefined, highlights);
 
-  console.log(`[notify] Sending Telegram message for ${date} (${reports.length} reports)…`);
-  await sendTelegram(text);
+  if (hasTelegram) {
+    console.log(`[notify] Sending Telegram message for ${date} (${reports.length} reports)...`);
+    await sendTelegram(text);
+  }
+
+  if (hasDiscord) {
+    console.log(`[notify] Sending Discord message for ${date} (${reports.length} reports)...`);
+    await sendDiscord(text);
+  }
+
   console.log("[notify] Done!");
 }
 
-main().catch((e: unknown) => {
-  console.error("[notify]", e instanceof Error ? e.message : e);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e: unknown) => {
+    console.error("[notify]", e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
+}

@@ -7,6 +7,13 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "workerd"
+    ]
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4",
     "typescript": "^5",

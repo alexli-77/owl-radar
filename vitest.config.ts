@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    env: {
+      LLM_INTER_REQUEST_MS: "0",
+    },
     globals: true,
     include: ["src/__tests__/**/*.test.ts"],
     coverage: {
